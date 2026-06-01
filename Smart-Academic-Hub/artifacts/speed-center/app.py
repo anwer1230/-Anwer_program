@@ -4574,7 +4574,7 @@ def tools_pptx_chat():
 
 @app.route("/academic")
 def academic_analysis():
-    groq_key = os.environ.get('GROQ_API_KEY', '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')
+    groq_key = os.environ.get('GROQ_API_KEY', '')
     resp = make_response(render_template('academic.html', groq_key=groq_key))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     return resp
