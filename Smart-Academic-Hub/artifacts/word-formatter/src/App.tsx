@@ -1,0 +1,1236 @@
+import { useState, useRef, useEffect, Component, type ReactNode } from "react";
+import { parseText, ParsedBlock } from "./lib/tableDetector";
+import { generateDocx } from "./lib/docGenerator";
+import { patchDocxFonts, type DocxMargins } from "./lib/docxFontPatcher";
+import { BORDER_PRESETS, BorderPreset } from "./lib/borderPresets";
+import { parseDocxToBlocks } from "./lib/docxParser";
+import { parsePdfToText } from "./lib/pdfParser";
+import { exportHtmlAsPdf, exportHtmlAsDocx, exportHtmlAsExcel } from "./lib/htmlExporter";
+import {
+  FileText,
+  Download,
+  RefreshCw,
+  CheckCircle,
+  AlertCircle,
+  Table,
+  AlignRight,
+  Heading,
+  Upload,
+  Code,
+  Copy,
+  Image as ImageIcon,
+  Smartphone,
+} from "lucide-react";
+
+// ─── Error Boundary ────────────────────────────────────────────────────────────
+interface EBState { hasError: boolean; message: string }
+class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: "" };
+  }
+  static getDerivedStateFromError(err: Error): EBState {
+    return { hasError: true, message: err?.message || "خطأ غير معروف" };
+  }
+  componentDidCatch() {
+    this.setState((s) => ({ ...s, hasError: true }));
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4 p-8 text-center">
+          <AlertCircle size={48} className="text-red-400" />
+          <div>
+            <p className="text-lg font-semibold text-foreground mb-1">حدث خطأ في عرض المحتوى</p>
+            <p className="text-sm text-muted-foreground mb-4">{this.state.message}</p>
+            <button
+              onClick={() => this.setState({ hasError: false, message: "" })}
+              className="bg-primary text-white px-5 py-2 rounded-lg text-sm font-medium hover:opacity-90 transition"
+            >
+              إعادة المحاولة
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+type Status = "idle" | "processing" | "done" | "error";
+type UploadStatus = "idle" | "reading" | "ready" | "error";
+type FileKind = "docx" | "pdf" | null;
+type ExportFormat = "pdf" | "docx" | "excel";
+type ActiveTab = "formatter" | "html";
+
+// ─── Block Preview ─────────────────────────────────────────────────────────────
+function BlockPreview({ block, index }: { block: ParsedBlock; index: number }) {
+  if (block.type === "empty") return <div className="h-2" key={index} />;
+
+  if (block.type === "image" && block.imageData) {
+    return (
+      <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50 overflow-hidden">
+        <div className="flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium">
+          <ImageIcon size={12} />
+          <span>صورة / رسم بياني</span>
+        </div>
+        <div className="p-2 flex justify-center">
+          <img
+            src={block.imageData}
+            alt={block.imageAlt || "صورة"}
+            className="max-w-full max-h-64 object-contain rounded"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (block.type === "table" && block.table) {
+    return (
+      <div className="mb-3 overflow-x-auto rounded border border-blue-200 bg-blue-50">
+        <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 text-xs font-medium">
+          <Table size={12} />
+          <span>جدول مُكتشَف</span>
+          <span className="mr-auto opacity-60">
+            {block.table.headers.length} أعمدة × {block.table.rows.length} صف
+          </span>
+        </div>
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr>
+              {block.table.headers.map((h, i) => (
+                <th key={i} className="border border-blue-300 bg-blue-200 px-2 py-1 text-right font-semibold text-blue-900">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.table.rows.map((row, ri) => (
+              <tr key={ri} className={ri % 2 === 0 ? "bg-white" : "bg-blue-50/50"}>
+                {row.map((cell, ci) => (
+                  <td key={ci} className="border border-blue-200 px-2 py-1 text-right text-gray-800">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  if (block.type === "heading1") {
+    return (
+      <div className="flex items-start gap-2 mb-2">
+        <div className="mt-1 text-emerald-600 shrink-0"><Heading size={14} /></div>
+        <p className="font-bold text-base text-gray-900">{block.text}</p>
+      </div>
+    );
+  }
+
+  if (block.type === "heading2") {
+    return (
+      <div className="flex items-start gap-2 mb-2">
+        <div className="mt-1 text-emerald-400 shrink-0"><Heading size={12} /></div>
+        <p className="font-semibold text-sm text-gray-800">{block.text}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2 mb-2">
+      <div className="mt-1 text-gray-400 shrink-0"><AlignRight size={12} /></div>
+      <p className="text-sm text-gray-700 leading-relaxed">{block.text}</p>
+    </div>
+  );
+}
+
+function StatsBar({ blocks }: { blocks: ParsedBlock[] }) {
+  const tables = blocks.filter((b) => b.type === "table").length;
+  const images = blocks.filter((b) => b.type === "image").length;
+  const h1 = blocks.filter((b) => b.type === "heading1").length;
+  const h2 = blocks.filter((b) => b.type === "heading2").length;
+  const paras = blocks.filter((b) => b.type === "paragraph").length;
+  return (
+    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground px-1">
+      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{h1} عنوان رئيسي</span>
+      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-300 inline-block" />{h2} عنوان فرعي</span>
+      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />{tables} جدول</span>
+      {images > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />{images} صورة</span>}
+      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-400 inline-block" />{paras} فقرة</span>
+    </div>
+  );
+}
+
+// ─── Border Card ───────────────────────────────────────────────────────────────
+function BorderPreview({ preset, selected, onClick }: {
+  preset: BorderPreset; selected: boolean; onClick: () => void;
+}) {
+  const isNone = preset.id === "none";
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex flex-col items-center gap-2 p-2 rounded-xl border-2 transition-all cursor-pointer text-center
+        ${selected ? "border-primary bg-primary/8 shadow-md" : "border-border bg-white hover:border-primary/40 hover:bg-muted/30"}`}
+    >
+      <div
+        className="w-12 h-16 rounded bg-white shadow-sm relative flex items-center justify-center overflow-hidden"
+        style={{ border: isNone ? "1px dashed #d1d5db" : preset.cssPreview }}
+      >
+        <div className="flex flex-col gap-1 w-7">
+          <div className="h-0.5 bg-gray-200 rounded w-full" />
+          <div className="h-0.5 bg-gray-200 rounded w-5/6" />
+          <div className="h-0.5 bg-gray-200 rounded w-full" />
+          <div className="h-0.5 bg-gray-200 rounded w-4/6" />
+          <div className="h-0.5 bg-gray-200 rounded w-full" />
+        </div>
+        {!isNone && (
+          <div className="absolute -top-1 -right-1 text-xs leading-none">{preset.emoji}</div>
+        )}
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-foreground leading-tight">{preset.label}</p>
+        <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{preset.description}</p>
+      </div>
+      {selected && (
+        <div className="absolute top-1.5 left-1.5 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+          <CheckCircle size={10} className="text-white" />
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ─── File type badge ───────────────────────────────────────────────────────────
+function FileTypeBadge({ kind }: { kind: FileKind }) {
+  if (!kind) return null;
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide
+      ${kind === "pdf" ? "bg-red-100 text-red-700" : "bg-blue-100 text-blue-700"}`}>
+      {kind === "pdf" ? "📄 PDF" : "📝 DOCX"}
+    </span>
+  );
+}
+
+// ─── HTML Exporter Tab ─────────────────────────────────────────────────────────
+function HtmlExporterSection() {
+  const [htmlCode, setHtmlCode] = useState("");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
+  const [exporting, setExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<"idle" | "done" | "error">("idle");
+  const [exportError, setExportError] = useState("");
+  const [htmlFileName, setHtmlFileName] = useState("المستند_المُصدَّر");
+
+  const handleExport = async () => {
+    if (!htmlCode.trim()) return;
+    setExporting(true);
+    setExportStatus("idle");
+    setExportError("");
+    try {
+      if (exportFormat === "pdf") {
+        await exportHtmlAsPdf(htmlCode, htmlFileName);
+      } else if (exportFormat === "docx") {
+        await exportHtmlAsDocx(htmlCode, htmlFileName);
+      } else {
+        exportHtmlAsExcel(htmlCode, htmlFileName);
+      }
+      setExportStatus("done");
+      setTimeout(() => setExportStatus("idle"), 5000);
+    } catch (e: unknown) {
+      setExportStatus("error");
+      setExportError(e instanceof Error ? e.message : "حدث خطأ أثناء التصدير");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const formatLabels: Record<ExportFormat, string> = {
+    pdf: "PDF",
+    docx: "Word (.docx)",
+    excel: "Excel (.xlsx)",
+  };
+
+  const formatIcons: Record<ExportFormat, string> = {
+    pdf: "📄",
+    docx: "📝",
+    excel: "📊",
+  };
+
+  const exampleHtml = `<h1>عنوان المستند</h1>
+<p>هذا نص تجريبي باللغة العربية. يمكنك كتابة أي محتوى HTML هنا.</p>
+<h2>This is an English Heading</h2>
+<p>English text goes left to right automatically.</p>
+<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%">
+  <tr><th>العمود 1</th><th>العمود 2</th><th>Column 3</th></tr>
+  <tr><td>بيانات أ</td><td>بيانات ب</td><td>Data C</td></tr>
+  <tr><td>بيانات د</td><td>بيانات هـ</td><td>Data F</td></tr>
+</table>
+<p>يمكنك إضافة قوائم أيضاً:</p>
+<ul>
+  <li>العنصر الأول</li>
+  <li>العنصر الثاني</li>
+  <li>Item Three</li>
+</ul>`;
+
+  return (
+    <div className="space-y-5">
+      {/* Settings */}
+      <div className="bg-white rounded-xl border border-border shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+          <Code size={15} className="text-primary" />
+          إعدادات التصدير
+        </h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">اسم الملف</label>
+            <input
+              type="text"
+              value={htmlFileName}
+              onChange={(e) => setHtmlFileName(e.target.value)}
+              className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background"
+              placeholder="اسم الملف"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">صيغة التصدير</label>
+            <div className="flex gap-2">
+              {(["pdf", "docx", "excel"] as ExportFormat[]).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => setExportFormat(fmt)}
+                  className={`flex-1 flex flex-col items-center gap-0.5 py-2 px-1 rounded-lg text-xs font-medium border transition
+                    ${exportFormat === fmt
+                      ? "border-primary bg-primary text-white shadow-sm"
+                      : "border-border bg-white text-foreground hover:bg-muted/30"
+                    }`}
+                >
+                  <span className="text-base">{formatIcons[fmt]}</span>
+                  <span>{fmt === "pdf" ? "PDF" : fmt === "docx" ? "Word" : "Excel"}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-muted/30 rounded-lg p-3 text-xs text-muted-foreground flex flex-wrap gap-4">
+          <span>📄 PDF — يحافظ على التصميم والألوان كاملاً</span>
+          <span>📝 Word — يدعم العربية والإنجليزية مع الجداول</span>
+          <span>📊 Excel — يستخرج الجداول إلى أوراق عمل</span>
+        </div>
+      </div>
+
+      {/* HTML Editor */}
+      <div className="bg-white rounded-xl border border-border shadow-sm">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <Code size={14} className="text-primary" />
+            كود HTML
+          </h2>
+          <button
+            onClick={() => setHtmlCode(exampleHtml)}
+            className="text-xs text-primary hover:underline"
+          >
+            إدراج مثال
+          </button>
+        </div>
+
+        <div className="p-4">
+          <p className="text-xs text-muted-foreground mb-2">
+            💡 الصق كود HTML — سيتم عرضه في المعاينة وتصديره بالصيغة المختارة.
+            النص العربي يبدأ من اليمين تلقائياً، والإنجليزي من اليسار.
+          </p>
+          <textarea
+            value={htmlCode}
+            onChange={(e) => setHtmlCode(e.target.value)}
+            placeholder={`<h1>عنوان المستند</h1>\n<p>نص عربي من اليمين</p>\n<p dir="ltr">English text from left</p>\n<table>...</table>`}
+            className="w-full h-56 border border-input rounded-lg p-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-ring bg-background leading-relaxed"
+            dir="ltr"
+            style={{ fontFamily: "monospace", textAlign: "left" }}
+          />
+        </div>
+
+        <div className="px-4 pb-4">
+          <button
+            onClick={handleExport}
+            disabled={!htmlCode.trim() || exporting}
+            className="flex items-center gap-2 bg-primary text-white px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition shadow-sm"
+          >
+            {exporting ? (
+              <><RefreshCw size={15} className="animate-spin" />جارٍ التصدير...</>
+            ) : (
+              <><Download size={15} />تصدير كـ {formatLabels[exportFormat]}</>
+            )}
+          </button>
+
+          {exportStatus === "done" && (
+            <div className="mt-3 flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-3 py-2 text-sm">
+              <CheckCircle size={15} />
+              <span>تم التصدير بنجاح! تحقق من مجلد التنزيلات.</span>
+            </div>
+          )}
+          {exportStatus === "error" && (
+            <div className="mt-3 flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
+              <AlertCircle size={15} />
+              <span>{exportError || "حدث خطأ أثناء التصدير"}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Live HTML Preview */}
+      {htmlCode.trim() && (
+        <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-foreground">معاينة HTML</h2>
+            <span className="text-xs text-muted-foreground bg-muted/40 px-2 py-0.5 rounded">
+              هذا ما ستظهر عليه النسخة المُصدَّرة
+            </span>
+          </div>
+          <div
+            className="p-6 min-h-24 max-h-[500px] overflow-auto"
+            style={{ direction: "auto" }}
+            dangerouslySetInnerHTML={{ __html: htmlCode }}
+          />
+        </div>
+      )}
+
+      {/* Guide */}
+      <div className="bg-white rounded-xl border border-border shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-3">أمثلة على العناصر المدعومة</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-muted-foreground">
+          <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
+            <p className="font-semibold text-foreground mb-1">📑 العناوين</p>
+            <code className="text-[10px] leading-relaxed block ltr">
+              {`<h1>عنوان رئيسي</h1>\n<h2>عنوان فرعي</h2>`}
+            </code>
+          </div>
+          <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+            <p className="font-semibold text-blue-800 mb-1">📊 الجداول</p>
+            <code className="text-[10px] leading-relaxed block ltr">
+              {`<table>\n  <tr><th>عمود</th></tr>\n  <tr><td>بيانات</td></tr>\n</table>`}
+            </code>
+          </div>
+          <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100">
+            <p className="font-semibold text-emerald-800 mb-1">🔤 اتجاه النص</p>
+            <code className="text-[10px] leading-relaxed block ltr">
+              {`<p>نص عربي ← يمين</p>\n<p dir="ltr">English → left</p>`}
+            </code>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Live Page Preview ─────────────────────────────────────────────────────────
+function PageContent({
+  blocks,
+  fileName,
+  prelim,
+}: {
+  blocks: ParsedBlock[];
+  fileName: string;
+  prelim: number;
+}) {
+  const hasContent = blocks.length > 0;
+  if (!hasContent) {
+    return (
+      <div style={{ color: "#aaa", fontSize: 15, textAlign: "center", marginTop: 80, lineHeight: 2.2 }}>
+        <div style={{ fontSize: 38, marginBottom: 12 }}>📝</div>
+        <div>أدخل نصاً أو ارفع ملفاً</div>
+        <div style={{ fontSize: 12, marginTop: 4 }}>لتظهر المعاينة هنا فورياً</div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      {prelim > 0 && (
+        <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 10, marginBottom: 16, borderBottom: "1px dashed #e2e8f0", paddingBottom: 8 }}>
+          {prelim} صفحة تمهيدية (i، ii، …)
+        </div>
+      )}
+      {fileName && (
+        <div style={{ textAlign: "center", fontWeight: "bold", fontSize: 17, marginBottom: 20, color: "#1e293b" }}>
+          {fileName}
+        </div>
+      )}
+      {blocks.map((block, i) => {
+        if (block.type === "empty") return <div key={i} style={{ height: 8 }} />;
+
+        if (block.type === "image" && block.imageData)
+          return (
+            <div key={i} style={{ margin: "10px 0", textAlign: "center" }}>
+              <img src={block.imageData} alt={block.imageAlt || "صورة"} style={{ maxWidth: "100%", maxHeight: 160, objectFit: "contain" }} />
+            </div>
+          );
+
+        if (block.type === "table" && block.table)
+          return (
+            <div key={i} style={{ margin: "10px 0" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr>
+                    {block.table.headers.map((h, hi) => (
+                      <th key={hi} style={{ border: "1px solid #94a3b8", padding: "4px 6px", background: "#e2e8f0", fontWeight: "bold", textAlign: "right" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.table.rows.map((row, ri) => (
+                    <tr key={ri} style={{ background: ri % 2 === 0 ? "#fff" : "#f8fafc" }}>
+                      {row.map((cell, ci) => (
+                        <td key={ci} style={{ border: "1px solid #cbd5e1", padding: "3px 6px", textAlign: "right", fontSize: 10 }}>
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+
+        if (block.type === "heading1")
+          return <div key={i} style={{ fontWeight: "bold", fontSize: 15, color: "#0f172a", margin: "14px 0 6px" }}>{block.text}</div>;
+
+        if (block.type === "heading2")
+          return <div key={i} style={{ fontWeight: "bold", fontSize: 12, color: "#1e293b", margin: "10px 0 4px" }}>{block.text}</div>;
+
+        return (
+          <div key={i} style={{ fontSize: 11, color: "#334155", margin: "3px 0", lineHeight: 1.7 }}>
+            {block.text}
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 32, textAlign: "center", color: "#94a3b8", fontSize: 10 }}>— 1 —</div>
+    </div>
+  );
+}
+
+function DocumentPagePreview({
+  blocks,
+  selectedBorder,
+  fileName,
+  prelim,
+}: {
+  blocks: ParsedBlock[];
+  selectedBorder: BorderPreset;
+  fileName: string;
+  prelim: number;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0.4);
+
+  const A4_W = 794;
+  const A4_H = 1123;
+
+  useEffect(() => {
+    const update = () => {
+      if (wrapperRef.current) {
+        const w = wrapperRef.current.offsetWidth;
+        setScale(Math.min((w - 8) / A4_W, 0.48));
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    if (wrapperRef.current) ro.observe(wrapperRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const scaledH = Math.round(A4_H * scale);
+
+  return (
+    <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-border flex items-center justify-between bg-slate-50">
+        <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+          <span className="text-base">📄</span>
+          معاينة حية للمستند
+        </span>
+        {selectedBorder.id !== "none" && (
+          <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <span>{selectedBorder.emoji}</span>
+            {selectedBorder.label}
+          </span>
+        )}
+      </div>
+
+      <div ref={wrapperRef} className="bg-slate-100" style={{ height: scaledH + 16, overflow: "hidden", position: "relative" }}>
+        <div
+          style={{
+            position: "absolute",
+            top: 8,
+            left: "50%",
+            transformOrigin: "top center",
+            transform: `translateX(-50%) scale(${scale})`,
+            width: A4_W,
+            minHeight: A4_H,
+            background: "#fff",
+            border: selectedBorder.id === "none" ? "none" : selectedBorder.cssPreview,
+            boxSizing: "border-box",
+            padding: "72px 80px 60px 64px",
+            fontFamily: '"Simplified Arabic", "Times New Roman", serif',
+            direction: "rtl",
+            lineHeight: 1.6,
+            boxShadow: "0 2px 18px rgba(0,0,0,0.13)",
+          }}
+        >
+          <PageContent blocks={blocks} fileName={fileName} prelim={prelim} />
+        </div>
+      </div>
+
+      <div className="px-3 py-2 text-[10px] text-muted-foreground text-center bg-slate-50 border-t border-border">
+        المعاينة تقريبية — الشكل النهائي في ملف وورد قد يختلف طفيفاً
+      </div>
+    </div>
+  );
+}
+
+// ─── Document Formatter Tab ────────────────────────────────────────────────────
+function DocumentFormatterSection() {
+  const [text, setText] = useState("");
+  const [fileName, setFileName] = useState("المستند_المنسّق");
+  const [blocks, setBlocks] = useState<ParsedBlock[]>([]);
+  const [status, setStatus] = useState<Status>("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [prelim, setPrelim] = useState(5);
+  const [selectedBorder, setSelectedBorder] = useState<BorderPreset>(BORDER_PRESETS[0]);
+
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [uploadedFileKind, setUploadedFileKind] = useState<FileKind>(null);
+  const [uploadedArrayBuffer, setUploadedArrayBuffer] = useState<ArrayBuffer | null>(null);
+  const [hadEncodingIssues, setHadEncodingIssues] = useState(false);
+  const [structuredBlocks, setStructuredBlocks] = useState<ParsedBlock[] | null>(null);
+
+  const [arabicFont, setArabicFont] = useState("Simplified Arabic");
+  const [englishFont, setEnglishFont] = useState("Times New Roman");
+  const [overrideFontSize, setOverrideFontSize] = useState<number | null>(null);
+  const [keepMargins, setKeepMargins] = useState(true);
+  const [margins, setMargins] = useState<DocxMargins>({ top: 2.54, bottom: 2.54, left: 3.17, right: 3.17 });
+
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyText = async () => {
+    const activeBlocks = structuredBlocks ?? (blocks.length > 0 ? blocks : parseText(text));
+    const lines: string[] = [];
+    for (const block of activeBlocks) {
+      if (block.type === "empty") { lines.push(""); continue; }
+      if (block.type === "heading1" && block.text) { lines.push(`# ${block.text}`); continue; }
+      if (block.type === "heading2" && block.text) { lines.push(`## ${block.text}`); continue; }
+      if (block.type === "paragraph" && block.text) { lines.push(block.text); continue; }
+      if (block.type === "table" && block.table) {
+        lines.push(block.table.headers.join(" | "));
+        lines.push(block.table.headers.map(() => "---").join(" | "));
+        for (const row of block.table.rows) lines.push(row.join(" | "));
+      }
+    }
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setCopyStatus("copied");
+    setTimeout(() => setCopyStatus("idle"), 2500);
+  };
+
+  const handleAnalyze = () => {
+    if (!text.trim()) return;
+    const parsed = parseText(text);
+    setBlocks(parsed);
+    setStructuredBlocks(null);
+  };
+
+  const handleGenerate = async () => {
+    const hasContent = text.trim() || (structuredBlocks && structuredBlocks.length > 0);
+    if (!hasContent) return;
+    setStatus("processing");
+    setErrorMsg("");
+    try {
+      if (uploadedFileKind === "docx" && uploadedArrayBuffer) {
+        await patchDocxFonts(uploadedArrayBuffer, fileName, {
+          arabicFont,
+          englishFont,
+          fontSize: overrideFontSize,
+          margins: keepMargins ? null : margins,
+          borderPreset: selectedBorder.id === "none" ? null : selectedBorder,
+        });
+      } else {
+        const parsed = structuredBlocks ?? (blocks.length > 0 ? blocks : parseText(text));
+        await generateDocx(
+          parsed,
+          fileName,
+          prelim,
+          selectedBorder.id === "none" ? null : selectedBorder,
+          {
+            arabicFont,
+            englishFont,
+            fontSize: overrideFontSize,
+            margins: keepMargins ? null : margins,
+          }
+        );
+      }
+      setStatus("done");
+      setTimeout(() => setStatus("idle"), 4000);
+    } catch (e: unknown) {
+      setStatus("error");
+      setErrorMsg(e instanceof Error ? e.message : "حدث خطأ غير معروف");
+    }
+  };
+
+  const handleClear = () => {
+    setText("");
+    setBlocks([]);
+    setStructuredBlocks(null);
+    setStatus("idle");
+    setErrorMsg("");
+    setUploadStatus("idle");
+    setUploadedFileName("");
+    setUploadError("");
+    setUploadedFileKind(null);
+    setUploadedArrayBuffer(null);
+    textareaRef.current?.focus();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    const isDocx = file.name.toLowerCase().endsWith(".docx");
+    const isPdf = file.name.toLowerCase().endsWith(".pdf");
+
+    if (!isDocx && !isPdf) {
+      setUploadStatus("error");
+      setUploadError("الرجاء اختيار ملف .docx أو .pdf فقط");
+      return;
+    }
+
+    setUploadStatus("reading");
+    setUploadError("");
+    setUploadedFileName(file.name);
+    setUploadedFileKind(isDocx ? "docx" : "pdf");
+    setStructuredBlocks(null);
+    setBlocks([]);
+    setHadEncodingIssues(false);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+
+      if (isDocx) {
+        setUploadedArrayBuffer(arrayBuffer);
+        const { blocks: parsedBlocks, rawText, hadEncodingIssues: enc } = await parseDocxToBlocks(arrayBuffer);
+        setText(rawText);
+        setStructuredBlocks(parsedBlocks);
+        setBlocks(parsedBlocks);
+        setHadEncodingIssues(enc);
+        setFileName(file.name.replace(/\.docx$/i, "") + "_منسّق");
+        setUploadStatus("ready");
+      } else {
+        const extracted = await parsePdfToText(arrayBuffer);
+        if (!extracted.trim()) {
+          setUploadStatus("error");
+          setUploadError("لم يتم العثور على نص قابل للاستخراج في ملف PDF");
+          return;
+        }
+        setText(extracted);
+        const parsed = parseText(extracted);
+        setBlocks(parsed);
+        setFileName(file.name.replace(/\.pdf$/i, "") + "_منسّق");
+        setUploadStatus("ready");
+      }
+    } catch (err: unknown) {
+      setUploadStatus("error");
+      const msg = err instanceof Error ? err.message : "";
+      setUploadError(
+        isDocx
+          ? `تعذّر قراءة ملف وورد. ${msg}`
+          : `تعذّر قراءة ملف PDF. تأكد أن الملف غير محمي بكلمة مرور. ${msg}`
+      );
+    }
+  };
+
+  const hasContent = text.trim().length > 0 || (structuredBlocks && structuredBlocks.length > 0);
+  const showPreview = blocks.length > 0;
+  const tableCount = (structuredBlocks ?? blocks).filter((b) => b.type === "table").length;
+  const imageCount = (structuredBlocks ?? blocks).filter((b) => b.type === "image").length;
+
+  const previewBlocks = structuredBlocks ?? blocks;
+
+  return (
+    <div className="flex flex-col lg:grid lg:grid-cols-[1fr_320px] lg:items-start gap-5">
+    <div className="space-y-5">
+      {/* Settings */}
+      <div className="bg-white rounded-xl border border-border p-4 shadow-sm">
+        <h2 className="text-sm font-semibold text-foreground mb-3">إعدادات المستند</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">اسم الملف</label>
+            <input type="text" value={fileName} onChange={(e) => setFileName(e.target.value)}
+              className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background" placeholder="اسم الملف" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">عدد الصفحات التمهيدية (تُرقَّم بأرقام رومانية)</label>
+            <input type="number" min={0} max={30} value={prelim} onChange={(e) => setPrelim(Number(e.target.value))}
+              className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background" />
+          </div>
+        </div>
+        {/* Font settings */}
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="text-xs font-semibold text-foreground mb-3 flex items-center gap-1">
+            <span>🔤</span> إعدادات الخط
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">خط النص العربي</label>
+              <select value={arabicFont} onChange={(e) => setArabicFont(e.target.value)}
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background">
+                <option value="Simplified Arabic">Simplified Arabic</option>
+                <option value="Traditional Arabic">Traditional Arabic</option>
+                <option value="Arabic Typesetting">Arabic Typesetting</option>
+                <option value="Sakkal Majalla">Sakkal Majalla</option>
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Arial">Arial</option>
+                <option value="Calibri">Calibri</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">خط النص الإنجليزي</label>
+              <select value={englishFont} onChange={(e) => setEnglishFont(e.target.value)}
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background">
+                <option value="Times New Roman">Times New Roman</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Arial">Arial</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Cambria">Cambria</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">حجم الخط (نقطة)</label>
+              <select
+                value={overrideFontSize ?? ""}
+                onChange={(e) => setOverrideFontSize(e.target.value ? Number(e.target.value) : null)}
+                className="w-full border border-input rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background">
+                <option value="">بدون تغيير (كما في الأصل)</option>
+                <option value="10">10 pt</option>
+                <option value="11">11 pt</option>
+                <option value="12">12 pt</option>
+                <option value="13">13 pt</option>
+                <option value="14">14 pt</option>
+                <option value="16">16 pt</option>
+                <option value="18">18 pt</option>
+              </select>
+            </div>
+          </div>
+          {uploadedFileKind === "docx" && (
+            <p className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 flex items-center gap-2">
+              <span>✅</span>
+              وضع الحفاظ على التنسيق — سيتم تغيير الخط فقط ويبقى كل شيء آخر (الجداول، الصور، الترتيب، الألوان) كما في الأصل
+            </p>
+          )}
+        </div>
+        {/* Margin settings */}
+        <div className="mt-4 border-t border-border pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-foreground flex items-center gap-1">
+              <span>📏</span> الهوامش (سم)
+            </p>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+              <input type="checkbox" checked={keepMargins}
+                onChange={(e) => setKeepMargins(e.target.checked)}
+                className="rounded" />
+              إبقاء هوامش الملف الأصلي
+            </label>
+          </div>
+          {!keepMargins && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {(["top","bottom","left","right"] as const).map((side) => {
+                const labels: Record<string, string> = { top: "أعلى", bottom: "أسفل", left: "يسار", right: "يمين" };
+                return (
+                  <div key={side}>
+                    <label className="block text-xs text-muted-foreground mb-1">{labels[side]}</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" min={1} max={6} step={0.1}
+                        value={margins[side]}
+                        onChange={(e) => setMargins((m) => ({ ...m, [side]: Number(e.target.value) }))}
+                        className="w-full border border-input rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-background" />
+                      <span className="text-xs text-muted-foreground">سم</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {keepMargins && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
+              سيتم الإبقاء على هوامش الملف الأصلي كما هي
+            </p>
+          )}
+        </div>
+        <div className="mt-3 text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
+          📐 تباعد الأسطر: يُحافظ على التباعد الأصلي في الملف
+        </div>
+      </div>
+
+      {/* Page Borders */}
+      <div className="bg-white rounded-xl border border-border p-4 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <span className="text-base">🖼️</span>حدود الصفحة
+          </h2>
+          {selectedBorder.id !== "none" && (
+            <span className="text-xs text-primary font-medium flex items-center gap-1">
+              <span>{selectedBorder.emoji}</span><span>{selectedBorder.label}</span>
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-12 gap-2">
+          {BORDER_PRESETS.map((preset) => (
+            <BorderPreview key={preset.id} preset={preset}
+              selected={selectedBorder.id === preset.id}
+              onClick={() => setSelectedBorder(preset)} />
+          ))}
+        </div>
+        {selectedBorder.id !== "none" && (
+          <div className="mt-3 rounded-lg px-3 py-2 text-xs flex items-center gap-2"
+            style={{ background: selectedBorder.previewColor + "15", border: `1px solid ${selectedBorder.previewColor}40`, color: selectedBorder.previewColor }}>
+            <span className="text-base">{selectedBorder.emoji}</span>
+            <span>سيُضاف إطار <strong>{selectedBorder.label}</strong> حول كل صفحات المستند</span>
+          </div>
+        )}
+      </div>
+
+      {/* File Upload */}
+      <div className="bg-white rounded-xl border border-border shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+          <Upload size={15} className="text-primary" />
+          رفع ملف وورد أو PDF وإعادة تنسيقه
+        </h2>
+
+        <input ref={fileInputRef} type="file" accept=".docx,.pdf" className="hidden" onChange={handleFileUpload} />
+
+        <div
+          onClick={() => fileInputRef.current?.click()}
+          className={`relative cursor-pointer rounded-xl border-2 border-dashed transition-all px-6 py-7
+            flex flex-col items-center justify-center gap-3 text-center select-none
+            ${uploadStatus === "ready" ? "border-emerald-400 bg-emerald-50 hover:bg-emerald-100"
+              : uploadStatus === "error" ? "border-red-300 bg-red-50 hover:bg-red-100"
+              : uploadStatus === "reading" ? "border-blue-300 bg-blue-50 cursor-wait"
+              : "border-muted-foreground/25 bg-muted/20 hover:border-primary/50 hover:bg-primary/5"}`}
+        >
+          {uploadStatus === "reading" ? (
+            <>
+              <RefreshCw size={30} className="text-blue-500 animate-spin" />
+              <p className="text-sm font-medium text-blue-700">جارٍ قراءة الملف وتحليل محتواه...</p>
+            </>
+          ) : uploadStatus === "ready" ? (
+            <>
+              <CheckCircle size={30} className="text-emerald-500" />
+              <div className="space-y-1">
+                <div className="flex items-center justify-center gap-2">
+                  <p className="text-sm font-semibold text-emerald-700">تم تحميل الملف بنجاح</p>
+                  <FileTypeBadge kind={uploadedFileKind} />
+                </div>
+                <p className="text-xs text-emerald-600">{uploadedFileName}</p>
+                {tableCount > 0 && (
+                  <p className="text-xs font-medium text-blue-600">
+                    ✓ تم اكتشاف {tableCount} جدول وحفظ بنيتها
+                  </p>
+                )}
+                {imageCount > 0 && (
+                  <p className="text-xs font-medium text-purple-600">
+                    🖼️ تم استخراج {imageCount} صورة/رسم بياني
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  اضغط "إنشاء وتحميل" للحصول على النسخة المنسّقة
+                </p>
+              </div>
+              <p className="text-xs text-emerald-600 underline underline-offset-2">اضغط لاختيار ملف آخر</p>
+            </>
+          ) : uploadStatus === "error" ? (
+            <>
+              <AlertCircle size={30} className="text-red-500" />
+              <div>
+                <p className="text-sm font-semibold text-red-700">فشل تحميل الملف</p>
+                <p className="text-xs text-red-600 mt-0.5">{uploadError}</p>
+              </div>
+              <p className="text-xs text-red-500 underline underline-offset-2">اضغط للمحاولة مجدداً</p>
+            </>
+          ) : (
+            <>
+              <div className="flex gap-4 items-center">
+                <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center">
+                  <span className="text-2xl">📝</span>
+                </div>
+                <span className="text-2xl text-muted-foreground">أو</span>
+                <div className="w-12 h-12 rounded-2xl bg-red-100 flex items-center justify-center">
+                  <span className="text-2xl">📄</span>
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">اسحب ملفك هنا أو اضغط للاختيار</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  يدعم{" "}
+                  <span className="font-mono bg-blue-50 text-blue-700 px-1 rounded">.docx</span>
+                  {" "}(يحفظ الجداول والرسوم كما هي) و{" "}
+                  <span className="font-mono bg-red-50 text-red-700 px-1 rounded">.pdf</span>
+                  {" "}(يستخرج النص ويُنسّقه)
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Text Editor */}
+      <div className="bg-white rounded-xl border border-border shadow-sm">
+        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border">
+          <h2 className="text-sm font-semibold text-foreground">
+            النص المراد تنسيقه
+            {uploadedFileKind && uploadStatus === "ready" && (
+              <span className="mr-2 inline-flex"><FileTypeBadge kind={uploadedFileKind} /></span>
+            )}
+          </h2>
+          {(text || structuredBlocks) && (
+            <button onClick={handleClear} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <RefreshCw size={12} /> مسح
+            </button>
+          )}
+        </div>
+
+        <div className="p-4">
+          {uploadedFileKind === "docx" && structuredBlocks && (
+            <div className="mb-2 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-lg px-3 py-2 flex items-center gap-2">
+              <Table size={12} />
+              <span>
+                تم استخراج بنية الملف كاملةً ({structuredBlocks.filter(b => b.type === "table").length} جدول
+                {structuredBlocks.filter(b => b.type === "image").length > 0
+                  ? ` + ${structuredBlocks.filter(b => b.type === "image").length} صورة`
+                  : ""} محفوظ).
+                النص أدناه للاطلاع فقط — التنسيق سيستخدم البنية الأصلية.
+              </span>
+            </div>
+          )}
+          {hadEncodingIssues && (
+            <div className="mb-2 text-xs bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-3 py-2 flex items-start gap-2">
+              <span className="text-base shrink-0 mt-0.5">⚠️</span>
+              <span>
+                <strong>تحذير:</strong> يحتوي الملف على نص عربي مُشفَّر بصيغة قديمة (Presentation Forms). تمّ تطبيع النص تلقائياً، لكن قد يكون ترتيب بعض الكلمات غير مثالي.{" "}
+                <strong>يُوصى باستخدام نسخة PDF بدلاً من DOCX للحصول على أفضل النتائج.</strong>
+              </span>
+            </div>
+          )}
+          {uploadedFileKind !== "docx" && (
+            <p className="text-xs text-muted-foreground mb-2">
+              💡 للجداول: افصل الأعمدة بـ <code className="bg-muted px-1 rounded">|</code> أو بعدة مسافات أو بـ Tab
+            </p>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => { setText(e.target.value); setBlocks([]); setStructuredBlocks(null); }}
+            placeholder={`الصق نصك هنا...\n\nمثال على جدول:\nالاسم | العمر | التخصص\nأحمد | 25 | هندسة\nسارة | 23 | طب`}
+            className="w-full h-64 border border-input rounded-lg p-3 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring bg-background leading-relaxed font-mono"
+            dir="auto"
+          />
+        </div>
+
+        <div className="px-4 pb-4 flex flex-wrap gap-2">
+          <button onClick={handleAnalyze} disabled={!text.trim()}
+            className="flex items-center gap-2 bg-secondary text-secondary-foreground px-4 py-2 rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-40 transition">
+            <Table size={15} />
+            تحليل النص ومعاينة الجداول
+          </button>
+
+          <button onClick={handleGenerate} disabled={!hasContent || status === "processing"}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition shadow-sm">
+            {status === "processing" ? (
+              <><RefreshCw size={15} className="animate-spin" />جارٍ الإنشاء...</>
+            ) : (
+              <><Download size={15} />إنشاء وتحميل ملف وورد</>
+            )}
+          </button>
+
+          <button onClick={handleCopyText} disabled={!hasContent}
+            data-testid="button-copy-text"
+            className="flex items-center gap-2 bg-slate-100 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-200 disabled:opacity-40 transition">
+            {copyStatus === "copied" ? (
+              <><CheckCircle size={15} className="text-emerald-600" />تم النسخ!</>
+            ) : (
+              <><Copy size={15} />نسخ النص المنسّق</>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Status */}
+      {status === "done" && (
+        <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl px-4 py-3 text-sm">
+          <CheckCircle size={18} /><span>تم إنشاء الملف بنجاح! تحقق من مجلد التنزيلات.</span>
+        </div>
+      )}
+      {status === "error" && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+          <AlertCircle size={18} /><span>{errorMsg || "حدث خطأ أثناء إنشاء الملف"}</span>
+        </div>
+      )}
+
+      {/* Guide */}
+      <div className="bg-white rounded-xl border border-border shadow-sm p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-3">دليل الاستخدام</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-muted-foreground">
+          <div className="bg-blue-50 rounded-lg p-3 border border-blue-100">
+            <p className="font-semibold text-blue-800 mb-1">📝 ملف وورد (.docx)</p>
+            <p>يستخرج النص والجداول والصور والرسوم مباشرة — كل العناصر تُحفظ كما هي في موضعها</p>
+          </div>
+          <div className="bg-red-50 rounded-lg p-3 border border-red-100">
+            <p className="font-semibold text-red-800 mb-1">📄 ملف PDF</p>
+            <p>يستخرج النص صفحةً بصفحة ويُعيد بناء الفقرات، ثم يكتشف الجداول تلقائياً</p>
+          </div>
+          <div className="bg-muted/40 rounded-lg p-3">
+            <p className="font-semibold text-foreground mb-1">✍️ نص مباشر</p>
+            <pre className="font-mono leading-relaxed whitespace-pre-wrap">{`الاسم | الدرجة | النتيجة\nأحمد | 90 | ممتاز\nسارة | 85 | جيد جداً`}</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Right column — sticky live preview */}
+    <div className="lg:sticky lg:top-5 space-y-3">
+      <DocumentPagePreview
+        blocks={previewBlocks}
+        selectedBorder={selectedBorder}
+        fileName={fileName}
+        prelim={prelim}
+      />
+      {showPreview && (
+        <div className="bg-white rounded-xl border border-border shadow-sm">
+          <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+            <h2 className="text-xs font-semibold text-foreground">هيكل المستند</h2>
+            <StatsBar blocks={blocks} />
+          </div>
+          <div className="p-3 max-h-60 overflow-y-auto space-y-1">
+            {blocks.map((block, i) => (
+              <BlockPreview key={i} block={block} index={i} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+
+    </div>
+  );
+}
+
+// ─── PWA install prompt ─────────────────────────────────────────────────────────
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
+
+function usePwaInstall() {
+  const [promptEvt, setPromptEvt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(false);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setPromptEvt(e as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    window.addEventListener("appinstalled", () => setInstalled(true));
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
+  const install = async () => {
+    if (!promptEvt) return;
+    await promptEvt.prompt();
+    const { outcome } = await promptEvt.userChoice;
+    if (outcome === "accepted") setInstalled(true);
+    setPromptEvt(null);
+  };
+
+  return { canInstall: !!promptEvt && !installed, install, installed };
+}
+
+// ─── Main App ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("formatter");
+  const { canInstall, install } = usePwaInstall();
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50" dir="rtl">
+      {/* Header */}
+      <header className="bg-white border-b border-border shadow-sm">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-sm">
+            <FileText size={20} className="text-white" />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-lg font-bold text-foreground">منسّق مستندات وورد</h1>
+            <p className="text-xs text-muted-foreground">
+              تنسيق المستندات • محوّل HTML • دعم الرسوم البيانية والجداول
+            </p>
+          </div>
+          {canInstall && (
+            <button
+              onClick={install}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-medium transition border border-primary/20"
+              title="تثبيت كتطبيق"
+            >
+              <Smartphone size={14} />
+              <span className="hidden sm:inline">تثبيت</span>
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Tab Navigation */}
+      <div className="max-w-5xl mx-auto px-4 pt-5">
+        <div className="flex gap-1 bg-white rounded-xl border border-border p-1 shadow-sm">
+          <button
+            onClick={() => setActiveTab("formatter")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition
+              ${activeTab === "formatter"
+                ? "bg-primary text-white shadow-sm"
+                : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+              }`}
+          >
+            <FileText size={14} />
+            منسّق المستندات
+          </button>
+          <button
+            onClick={() => setActiveTab("html")}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition
+              ${activeTab === "html"
+                ? "bg-primary text-white shadow-sm"
+                : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+              }`}
+          >
+            <Code size={14} />
+            محوّل HTML
+          </button>
+        </div>
+      </div>
+
+      <main className="max-w-5xl mx-auto px-4 py-5">
+        <ErrorBoundary>
+          {activeTab === "formatter" ? (
+            <DocumentFormatterSection />
+          ) : (
+            <HtmlExporterSection />
+          )}
+        </ErrorBoundary>
+      </main>
+    </div>
+  );
+}

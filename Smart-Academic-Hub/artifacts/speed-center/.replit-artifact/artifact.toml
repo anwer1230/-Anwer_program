@@ -1,0 +1,24 @@
+kind = "web"
+previewPath = "/"
+title = "مركز سرعة انجاز"
+version = "1.0.0"
+id = "artifacts/speed-center"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22234
+
+[services.development]
+run = "bash -c 'cd /home/runner/workspace/artifacts/speed-center && python app.py'"
+
+[services.production]
+run = "bash -c 'cd /home/runner/workspace/artifacts/speed-center && python app.py'"
+
+[services.env]
+PORT = "22234"
