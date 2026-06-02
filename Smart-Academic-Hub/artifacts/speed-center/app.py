@@ -86,9 +86,10 @@ socketio = SocketIO(
 )
 
 # إعدادات النظام
-SESSIONS_DIR = "sessions"
-if not os.path.exists(SESSIONS_DIR):
-    os.makedirs(SESSIONS_DIR)
+# On Render (production) use /tmp for writable storage; locally use "sessions"
+  SESSIONS_DIR = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'sessions') if os.environ.get('RENDER') else "sessions"
+  if not os.path.exists(SESSIONS_DIR):
+      os.makedirs(SESSIONS_DIR)
 
 # نظام المستخدمين الخمسة المحددين مسبقاً
 PREDEFINED_USERS = {
@@ -4576,7 +4577,8 @@ def tools_pptx_chat():
 
 @app.route("/academic")
 def academic_analysis():
-    resp = make_response(render_template('academic.html', groq_key=groq_key))
+    _groq_key = os.environ.get('GROQ_API_KEY', '').strip()
+    resp = make_response(render_template('academic.html', groq_key=_groq_key))
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
     return resp
 
