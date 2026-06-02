@@ -56,13 +56,15 @@ from telethon.sessions import StringSession
 import socket
 
 # تكوين السجلات المحسن
+_log_handlers = [logging.StreamHandler()]
+try:
+    _log_handlers.append(logging.FileHandler('telegram_monitoring.log', encoding='utf-8'))
+except Exception:
+    pass
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('telegram_monitoring.log', encoding='utf-8')
-    ]
+    handlers=_log_handlers
 )
 logger = logging.getLogger(__name__)
 
