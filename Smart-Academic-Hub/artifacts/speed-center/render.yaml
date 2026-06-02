@@ -5,11 +5,9 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
     healthCheckPath: /
     envVars:
-      - key: PORT
-        value: 10000
       - key: SESSION_SECRET
         generateValue: true
       - key: GROQ_API_KEY
