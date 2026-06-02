@@ -5,6 +5,7 @@ psutil==7.2.2
 python-dotenv==1.0.0
 Werkzeug==2.3.7
 eventlet==0.41.0
+gunicorn==21.2.0
 simple-websocket
 pandas
 numpy
