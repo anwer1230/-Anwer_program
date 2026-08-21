@@ -1,21 +1,22 @@
 .automation-github-skin {
   --repo-purple: #667eea;
   --repo-purple-dark: #764ba2;
-  --repo-blue: #0d6efd;
-  --repo-border: #dee2e6;
-  --repo-muted: #6c757d;
+  --repo-blue: #6c63ff;
+  --repo-border: rgba(255, 255, 255, 0.15);
+  --repo-muted: rgba(232, 234, 246, 0.65);
 }
 
 .automation-github-skin .automation-shell {
-  background: #f4f6fb !important;
-  border-color: #d8deea !important;
-  color: #212529 !important;
+  background: linear-gradient(135deg, #0f0c29, #302b63, #24243e) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  color: #e8eaf6 !important;
 }
 
 .automation-github-skin .automation-appbar {
-  background: linear-gradient(135deg, var(--repo-purple), var(--repo-purple-dark)) !important;
-  border: 0 !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
   color: #fff !important;
+  backdrop-filter: blur(14px);
 }
 
 .automation-github-skin .automation-appbar span,
@@ -29,46 +30,48 @@
 }
 
 .automation-github-skin .automation-tabs {
-  background: #fff !important;
-  border-color: var(--repo-border) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  backdrop-filter: blur(14px);
 }
 
 .automation-github-skin .automation-tab-idle {
-  color: #495057 !important;
+  color: rgba(232, 234, 246, 0.72) !important;
   border-color: transparent !important;
 }
 
 .automation-github-skin .automation-tab-idle:hover {
-  color: var(--repo-purple-dark) !important;
-  background: #f1efff !important;
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.15) !important;
 }
 
 .automation-github-skin .automation-tab-active {
-  background: linear-gradient(135deg, var(--repo-purple), var(--repo-purple-dark)) !important;
+  background: linear-gradient(135deg, #6c63ff, #4e45d1) !important;
   border-color: transparent !important;
 }
 
 .automation-github-skin .automation-content {
-  background: #f4f6fb !important;
-  color: #212529 !important;
+  background: transparent !important;
+  color: #e8eaf6 !important;
 }
 
-/* The source repository uses Bootstrap's light cards and bordered form controls. */
-.automation-github-skin .automation-content .bg-zinc-900 {
-  background: #fff !important;
-  border-color: var(--repo-border) !important;
-  box-shadow: 0 4px 15px rgba(31, 38, 135, 0.08) !important;
+/* The attached reference uses dark glass cards and Bootstrap-like controls. */
+.automation-github-skin .automation-content [class*="bg-zinc-900"] {
+  background: rgba(255, 255, 255, 0.07) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 8px 32px rgba(31, 38, 135, 0.24) !important;
+  backdrop-filter: blur(14px);
 }
 
-.automation-github-skin .automation-content .bg-zinc-950 {
-  background: #f8f9fa !important;
-  border-color: var(--repo-border) !important;
+.automation-github-skin .automation-content [class*="bg-zinc-950"] {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
 }
 
 .automation-github-skin .automation-content .text-zinc-100,
 .automation-github-skin .automation-content .text-zinc-200,
 .automation-github-skin .automation-content .text-zinc-300 {
-  color: #212529 !important;
+  color: #e8eaf6 !important;
 }
 
 .automation-github-skin .automation-content .text-zinc-400,
@@ -79,9 +82,9 @@
 .automation-github-skin .automation-content input,
 .automation-github-skin .automation-content textarea,
 .automation-github-skin .automation-content select {
-  background: #fff !important;
-  color: #212529 !important;
-  border-color: var(--repo-border) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #e8eaf6 !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
 }
 
 .automation-github-skin .automation-content input:focus,
@@ -100,5 +103,5 @@
 }
 
 .automation-github-skin .automation-content .font-mono {
-  color: #212529 !important;
+  color: #e8eaf6 !important;
 }
