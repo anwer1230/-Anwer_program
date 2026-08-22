@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TMessagesProject/src/main/res/layout/activity_sender.xml -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0f1621"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Title / Header -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚡ وحدة الإرسال المتقدم والأتمتة / Broadcast &amp; Sender"
+            android:textColor="#2ea6ff"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="إرسال جماعي، جدولة رسائل، وتفاعل آلي مع جهات الاتصال والمجموعات"
+            android:textColor="#708499"
+            android:textSize="13sp" />
+
+        <!-- Target Selection -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="الجمهور المستهدف / Target Audience"
+            android:textColor="#ffffff"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <Spinner
+            android:id="@+id/sp_target_type"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="6dp"
+            android:background="#17212b"
+            android:padding="8dp" />
+
+        <!-- Message Body -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="نص الرسالة أو القالب / Message Template"
+            android:textColor="#ffffff"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/et_batch_message"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:layout_marginTop="6dp"
+            android:background="#17212b"
+            android:gravity="top|start"
+            android:hint="أدخل نص الحملة أو المتغيرات مثل {name}..."
+            android:padding="12dp"
+            android:textColor="#ffffff"
+            android:textColorHint="#708499"
+            android:textSize="15sp" />
+
+        <!-- Interval & Protection -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="فاصل زمني مضاد للحظر (Anti-Flood Delay):"
+                android:textColor="#ffffff"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/tv_delay_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3.5 ثانية"
+                android:textColor="#2ea6ff"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Submit Button -->
+        <Button
+            android:id="@+id/btn_start_broadcast"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="24dp"
+            android:backgroundTint="#2481cc"
+            android:text="🚀 بدء الإرسال الفوري / Launch Broadcast"
+            android:textColor="#ffffff"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+</ScrollView>

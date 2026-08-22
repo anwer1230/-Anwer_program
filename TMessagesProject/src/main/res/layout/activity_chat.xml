@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TMessagesProject/src/main/res/layout/activity_chat.xml -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0f1621">
+
+    <!-- Top Action Bar -->
+    <include
+        android:id="@+id/chat_action_bar"
+        layout="@layout/action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_alignParentTop="true" />
+
+    <!-- Pinned Message Bar -->
+    <FrameLayout
+        android:id="@+id/pinned_message_bar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_below="@id/chat_action_bar"
+        android:background="#17212b"
+        android:visibility="gone" />
+
+    <!-- Message Recycler View List -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/chat_recycler_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@+id/chat_enter_view"
+        android:layout_below="@id/pinned_message_bar"
+        android:clipToPadding="false"
+        android:paddingBottom="8dp"
+        android:paddingTop="8dp"
+        android:scrollbars="vertical" />
+
+    <!-- Bottom Composer Bar -->
+    <LinearLayout
+        android:id="@+id/chat_enter_view"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:background="#17212b"
+        android:minHeight="52dp"
+        android:orientation="horizontal"
+        android:padding="6dp">
+
+        <ImageView
+            android:id="@+id/btn_attach"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center_vertical"
+            android:contentDescription="Attach File"
+            android:src="@drawable/ic_attach" />
+
+        <EditText
+            android:id="@+id/et_message_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="اكتب رسالة / Message..."
+            android:maxLines="6"
+            android:padding="8dp"
+            android:textColor="#ffffff"
+            android:textColorHint="#708499"
+            android:textSize="16sp" />
+
+        <ImageView
+            android:id="@+id/btn_send_or_voice"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center_vertical"
+            android:contentDescription="Send Message"
+            android:src="@drawable/ic_send" />
+    </LinearLayout>
+
+</RelativeLayout>
