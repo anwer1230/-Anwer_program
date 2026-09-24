@@ -1,6 +1,6 @@
 {
-  "name": "Telegram Web Unified",
-  "description": "تطبيق تيليجرام ويب الموحد والمتكامل مع دعم TDLib، المصادقة، الوسائط المتعددة، الأزرار التفاعلية، والأرشفة",
-  "requestFramePermissions": ["microphone", "camera"],
+  "name": "سُرعة إنجاز - الخدمات الطلابية والأكاديمية",
+  "description": "مركز سرعة إنجاز للخدمات الطلابية والأكاديمية ونظام التليجرام المتكامل",
+  "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
