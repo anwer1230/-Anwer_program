@@ -1412,6 +1412,8 @@ def save_settings(user_id, settings, force=False):
             settings.setdefault('my_alerts_reply_sound_enabled', True)
             settings.setdefault('my_alerts_reply_sound_tone', 'chime')
             settings.setdefault('user_auto_replies', [])
+            settings.setdefault('keyword_dm_reply_enabled', False)
+            settings.setdefault('keyword_dm_reply_text', 'ابشر')
 
         if not force:
             existing = load_settings(user_id)
@@ -1446,6 +1448,8 @@ def load_settings(user_id):
                 database_settings.setdefault('my_alerts_reply_sound_enabled', True)
                 database_settings.setdefault('my_alerts_reply_sound_tone', 'chime')
                 database_settings.setdefault('user_auto_replies', [])
+                database_settings.setdefault('keyword_dm_reply_enabled', False)
+                database_settings.setdefault('keyword_dm_reply_text', 'ابشر')
                 return database_settings
         except Exception as _db_load_error:
             logger.warning("PostgreSQL settings read failed for %s: %s", user_id, _db_load_error)
@@ -1464,6 +1468,8 @@ def load_settings(user_id):
             data.setdefault('my_alerts_reply_sound_enabled', True)
             data.setdefault('my_alerts_reply_sound_tone', 'chime')
             data.setdefault('user_auto_replies', [])
+            data.setdefault('keyword_dm_reply_enabled', False)
+            data.setdefault('keyword_dm_reply_text', 'ابشر')
             if _DB_READY:
                 _app_db.save_settings(user_id, data)
             return data
@@ -1480,6 +1486,8 @@ def load_settings(user_id):
             data.setdefault('my_alerts_reply_sound_enabled', True)
             data.setdefault('my_alerts_reply_sound_tone', 'chime')
             data.setdefault('user_auto_replies', [])
+            data.setdefault('keyword_dm_reply_enabled', False)
+            data.setdefault('keyword_dm_reply_text', 'ابشر')
             # نقل البيانات للمجلد الجديد والقاعدة عند توفرها
             save_settings(user_id, data, force=True)
             return data
@@ -1491,7 +1499,9 @@ def load_settings(user_id):
             'my_alerts_actions': True,
             'my_alerts_reply_sound_enabled': True,
             'my_alerts_reply_sound_tone': 'chime',
-            'user_auto_replies': []
+            'user_auto_replies': [],
+            'keyword_dm_reply_enabled': False,
+            'keyword_dm_reply_text': 'ابشر'
         }
     except Exception as e:
         logger.error(f"Error loading settings for {user_id}: {str(e)}")
@@ -1503,7 +1513,9 @@ def load_settings(user_id):
             'my_alerts_actions': True,
             'my_alerts_reply_sound_enabled': True,
             'my_alerts_reply_sound_tone': 'chime',
-            'user_auto_replies': []
+            'user_auto_replies': [],
+            'keyword_dm_reply_enabled': False,
+            'keyword_dm_reply_text': 'ابشر'
         }
 
 # ترحيل كسول وآمن: لا يستبدل أي إعداد موجود في PostgreSQL
@@ -2542,11 +2554,91 @@ class TelegramClientManager:
         except Exception as e:
             logger.error(f"Auto-reply handler error: {e}")
 
-    async def _trigger_keyword_alert(self, message, keyword, group_identifier, group_link, event):
+    async def _handle_keyword_dm_reply(self, event, message, sender, sender_id, sender_username, sender_name, keyword, settings):
+        """
+        إعادة توجيه الرسالة التي تحوي الكلمة المراقبة إلى خاص المرسل مع الرد بكلمة (ابشر).
+        معزولة ومحمية بالكامل لضمان عدم تأثر وظيفة مراقبة الكلمات والتنبيهات نهائياً.
+        """
         try:
-            sender_name = "غير معروف"
-            sender_id   = None
-            sender_username = None
+            if not self.client:
+                return
+
+            # التحقق من أن الرسالة ليست من حسابنا الشخصي
+            if sender_id and self.my_id and int(sender_id) == int(self.my_id):
+                return
+
+            # تحديد الهدف (المستخدم المرسل للرسالة)
+            target_peer = sender or sender_id or sender_username
+            if not target_peer:
+                logger.warning(f"⚠️ [Keyword DM] No sender peer available to send private reply for '{keyword}'")
+                return
+
+            # التحقق من أن الهدف ليس قناة أو إذاعة ترسل ككيان عام
+            if hasattr(sender, 'broadcast') and sender.broadcast:
+                logger.info(f"ℹ️ [Keyword DM] Sender is a channel/broadcast, skipping DM for '{keyword}'")
+                return
+
+            reply_text = (settings.get('keyword_dm_reply_text', 'ابشر') or 'ابشر').strip()
+
+            # 1. إعادة توجيه الرسالة الأصلية التي تحوي الكلمة المراقبة إلى خاص المرسل
+            fwd_msgs = None
+            try:
+                fwd_msgs = await self.client.forward_messages(
+                    entity=target_peer,
+                    messages=message.id,
+                    from_peer=event.chat_id
+                )
+            except Exception as fwd_err:
+                logger.warning(f"⚠️ Forward failed for peer {sender_name or target_peer} ({fwd_err}), falling back to quoting")
+                fwd_msgs = None
+
+            # 2. إرسال كلمة الرد (ابشر) كرد تحت الرسالة المعاد توجيهها أو كنص مقتبس
+            if fwd_msgs:
+                fwd_id = None
+                if isinstance(fwd_msgs, (list, tuple)) and len(fwd_msgs) > 0:
+                    fwd_id = getattr(fwd_msgs[0], 'id', None)
+                elif hasattr(fwd_msgs, 'id'):
+                    fwd_id = fwd_msgs.id
+
+                await self.client.send_message(
+                    entity=target_peer,
+                    message=reply_text,
+                    reply_to=fwd_id
+                )
+            else:
+                # إذا كانت المجموعة تمنع إعادة التوجيه، يتم إرسال نص الرسالة مقتبساً مع الرد
+                msg_body = message.text or ''
+                quote_text = f"💬 الرسالة:\n«{msg_body}»\n\n{reply_text}"
+                await self.client.send_message(
+                    entity=target_peer,
+                    message=quote_text
+                )
+
+            logger.info(f"✅ [Keyword DM] تم الرد بالخاص بنجاح على {sender_name or target_peer} بـ '{reply_text}' للكلمة: '{keyword}'")
+
+            # إشعار لواجهة المستخدم وتسجيل الحدث
+            try:
+                socketio.emit('log_update', {
+                    "message": f"📨 [رد تلقائي بالخاص] تم الرد على {sender_name or target_peer} بـ '{reply_text}' وإعادة توجيه رسالته (الكلمة: {keyword})"
+                }, to=self.user_id)
+                socketio.emit('auto_reply_triggered', {
+                    "keyword": keyword,
+                    "reply": reply_text,
+                    "chat": f"خاص مع {sender_name or target_peer}",
+                    "timestamp": time.strftime('%H:%M:%S')
+                }, to=self.user_id)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"❌ [Keyword DM] خطأ أثناء إرسال الرد بالخاص على الكلمة المراقبة (المراقبة لم تتأثر): {e}")
+
+    async def _trigger_keyword_alert(self, message, keyword, group_identifier, group_link, event):
+        sender = None
+        sender_name = "غير معروف"
+        sender_id   = None
+        sender_username = None
+        try:
             try:
                 sender = await event.get_sender()
                 if sender:
@@ -2618,6 +2710,25 @@ class TelegramClientManager:
                 logger.error(f"❌ Failed to send Telegram alert: {tg_err}")
 
             alert_queue.add_alert(self.user_id, alert_data)
+
+            # ──────────────────────────────────────────────────────────
+            # الرد التلقائي بالخاص على مرسل الكلمة المراقبة (معزول ومستقل تماماً)
+            # ──────────────────────────────────────────────────────────
+            try:
+                settings = load_settings(self.user_id)
+                if settings.get('keyword_dm_reply_enabled', False):
+                    await self._handle_keyword_dm_reply(
+                        event=event,
+                        message=message,
+                        sender=sender,
+                        sender_id=sender_id,
+                        sender_username=sender_username,
+                        sender_name=sender_name,
+                        keyword=keyword,
+                        settings=settings
+                    )
+            except Exception as dm_call_err:
+                logger.error(f"Keyword DM auto-reply caller error (monitoring unaffected): {dm_call_err}")
 
         except Exception as e:
             logger.error(f"❌ Error triggering keyword alert: {str(e)}")
@@ -5371,6 +5482,8 @@ def api_save_settings():
         'auto_reconnect': data.get('auto_reconnect', False),
         'sanitize_mode': new_mode,
         'smart_required_messages': int(data.get('smart_required_messages', 3)),
+        'keyword_dm_reply_enabled': bool(data.get('keyword_dm_reply_enabled', current_settings.get('keyword_dm_reply_enabled', False))),
+        'keyword_dm_reply_text': str(data.get('keyword_dm_reply_text', current_settings.get('keyword_dm_reply_text', 'ابشر'))).strip() or 'ابشر',
     })
 
     if save_settings(user_id, current_settings):
@@ -5397,6 +5510,28 @@ def api_save_settings():
             "success": False, 
             "message": "❌ فشل في حفظ الإعدادات"
         })
+
+@app.route("/api/toggle_keyword_dm_reply", methods=["POST"])
+def api_toggle_keyword_dm_reply():
+    if 'user_id' not in session:
+        return jsonify({"success": False, "message": "❌ الجلسة غير صالحة"}), 401
+    user_id = session['user_id']
+    data = request.json or {}
+    enabled = bool(data.get('enabled', False))
+    reply_text = str(data.get('reply_text', 'ابشر')).strip() or 'ابشر'
+    settings = load_settings(user_id)
+    settings['keyword_dm_reply_enabled'] = enabled
+    settings['keyword_dm_reply_text'] = reply_text
+    save_settings(user_id, settings)
+    with USERS_LOCK:
+        if user_id in USERS:
+            USERS[user_id]['settings'] = settings
+    return jsonify({
+        "success": True,
+        "enabled": enabled,
+        "reply_text": reply_text,
+        "message": f"تم {'تفعيل' if enabled else 'تعطيل'} الرد التلقائي بالخاص على الكلمات المراقبة بنجاح"
+    })
 
 # ══════════════════════════════════════════════════════════
 #  مسارات وظيفة «تنبيهاتي» (My Alerts)
@@ -8244,7 +8379,9 @@ def api_get_auto_replies():
         "success": True,
         "enabled": settings.get('auto_reply_enabled', True),
         "auto_replies": settings.get('auto_replies', []) or [],
-        "user_auto_replies": settings.get('user_auto_replies', []) or []
+        "user_auto_replies": settings.get('user_auto_replies', []) or [],
+        "keyword_dm_reply_enabled": settings.get('keyword_dm_reply_enabled', False),
+        "keyword_dm_reply_text": settings.get('keyword_dm_reply_text', 'ابشر')
     })
 
 def _normalize_user_auto_reply(rule):
