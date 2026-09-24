@@ -103,6 +103,7 @@ from io import BytesIO
 import hashlib
 import secrets
 import requests
+import unicodedata
 
 # إضافات معالجة الملفات
 try:
@@ -863,8 +864,64 @@ DEFAULT_MONITORING_KEYWORDS_TEXT = """اريد مساعدة
 
 DEFAULT_MONITORING_KEYWORDS = [w.strip() for w in DEFAULT_MONITORING_KEYWORDS_TEXT.strip().split('\n') if w.strip()]
 
+def normalize_arabic_text(text: str) -> str:
+    """
+    تنظيف وتوحيد النص العربي للمطابقة الدقيقة:
+    1. إزالة كافة حركات التشكيل (فتحة، ضمة، كسرة، سكون، شدة، تنوين، إلخ).
+    2. إزالة التطويل / الكشيدة (ـ).
+    3. توحيد جميع أشكال الهمزات والألفات (أ، إ، آ، ٱ) -> ا.
+    4. توحيد الياء والألف المقصورة والهمزة على نبرة (ى، ئ) -> ي.
+    5. توحيد التاء المربوطة والهاء (ة) -> ه.
+    6. توحيد الهمزة على الواو (ؤ) -> و.
+    7. استبدال النقاط وعلامات الترقيم والرموز بمسافات لضمان فصل الكلمات بدقة.
+    8. دمج المسافات المتكررة وإزالة المسافات في البداية والنهاية.
+    """
+    if not text:
+        return ""
+    text = str(text).lower()
+    # 1. إزالة التشكيل والتنوين
+    text = re.sub(r'[\u0617-\u061A\u064B-\u065F\u0670]', '', text)
+    text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
+    # 2. إزالة التطويل (الكشيدة)
+    text = re.sub(r'[\u0640]', '', text)
+    # 3. توحيد الهمزات والألفات
+    text = re.sub(r'[أإآٱ]', 'ا', text)
+    # 4. توحيد الياء والألف المقصورة والياء المهموزة
+    text = re.sub(r'[ىئ]', 'ي', text)
+    # 5. توحيد التاء المربوطة
+    text = re.sub(r'ة', 'ه', text)
+    # 6. توحيد الواو المهموزة
+    text = re.sub(r'ؤ', 'و', text)
+    # 7. استبدال النقاط والترقيم والرموز والإيموجي بمسافات
+    text = re.sub(r'[^\w\s]', ' ', text)
+    text = text.replace('_', ' ')
+    # 8. توحيد المسافات
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def match_keyword_in_text(keyword: str, text: str) -> bool:
+    """
+    مطابقة كلمة/عبارة المراقبة ككلمة كاملة دون حساسية للتشكيل والهمزات والنقاط.
+    - مطابقة الكلمة أو العبارة كاملة فقط (Whole word/phrase match).
+    - غير حساسة للهمزات (أ، إ، آ -> ا).
+    - غير حساسة للياء/الألف المقصورة (ى -> ي).
+    - غير حساسة للتاء المربوطة/الهاء (ة -> ه).
+    - غير حساسة للتشكيل أو التنوين أو الكشيدة أو النقاط والترقيم.
+    """
+    if not keyword or not text:
+        return False
+    norm_kw = normalize_arabic_text(keyword)
+    if not norm_kw:
+        return False
+    norm_text = normalize_arabic_text(text)
+    if not norm_text:
+        return False
+    padded_text = f" {norm_text} "
+    padded_kw = f" {norm_kw} "
+    return padded_kw in padded_text
+
 def get_effective_watch_words(user_settings_or_words=None):
-    """دمج الكلمات الدائمة مع أي كلمات يضيفها المستخدم في الواجهة مع الحفاظ على الترتيب والفرادة"""
+    """دمج الكلمات الدائمة مع أي كلمات يضيفها المستخدم في الواجهة مع الحفاظ على الترتيب والفرادة وعدم تكرار الكلمات المتطابقة دلالياً بالتطبيع"""
     user_words = []
     if isinstance(user_settings_or_words, dict):
         user_words = user_settings_or_words.get('watch_words', [])
@@ -876,15 +933,17 @@ def get_effective_watch_words(user_settings_or_words=None):
     seen = set()
     combined = []
     for kw in DEFAULT_MONITORING_KEYWORDS:
-        norm = kw.strip()
+        raw = kw.strip()
+        norm = normalize_arabic_text(raw)
         if norm and norm not in seen:
             seen.add(norm)
-            combined.append(norm)
+            combined.append(raw)
     for kw in user_words:
-        norm = kw.strip()
+        raw = kw.strip()
+        norm = normalize_arabic_text(raw)
         if norm and norm not in seen:
             seen.add(norm)
-            combined.append(norm)
+            combined.append(raw)
     return combined
 
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
@@ -2301,16 +2360,15 @@ class TelegramClientManager:
                 self._processed_msg_ids.clear()
             self._processed_msg_ids.add(msg_uid)
 
-            import unicodedata
-            def _normalize(s):
-                return ''.join(c for c in unicodedata.normalize('NFKD', s)
-                               if unicodedata.category(c) != 'Mn')
-
-            text_clean = _normalize(text).lower()
+            norm_text = normalize_arabic_text(text)
+            padded_text = f" {norm_text} "
             matched = []
             for keyword in kw_list:
-                kw = keyword.strip()
-                if kw and _normalize(kw).lower() in text_clean:
+                kw = (keyword or '').strip()
+                if not kw:
+                    continue
+                norm_kw = normalize_arabic_text(kw)
+                if norm_kw and f" {norm_kw} " in padded_text:
                     matched.append(kw)
 
             if matched:
@@ -2442,11 +2500,11 @@ class TelegramClientManager:
                 matched = False
                 try:
                     if match_mode == 'exact':
-                        matched = (text.strip().lower() == keyword.lower())
+                        matched = (normalize_arabic_text(text) == normalize_arabic_text(keyword))
                     elif match_mode == 'regex':
                         matched = bool(re.search(keyword, text, re.IGNORECASE))
                     else:
-                        matched = (keyword.lower() in text_lower)
+                        matched = match_keyword_in_text(keyword, text)
                 except re.error as rerr:
                     logger.warning(f"Auto-reply regex error in rule #{idx} ({keyword}): {rerr}")
                     continue
@@ -7568,11 +7626,10 @@ class LearningBot:
     # ─── كشف الخدمة ──────────────────────────────────────────────
 
     def detect_service(self, text):
-        text_low = text.lower()
         best_match, best_score = None, 0
         for service, data in self.knowledge.items():
             for kw in data.get('keywords', []):
-                if kw in text_low and len(kw) > best_score:
+                if match_keyword_in_text(kw, text) and len(kw) > best_score:
                     best_score = len(kw)
                     best_match = service
         return best_match
@@ -7596,11 +7653,10 @@ class LearningBot:
             except Exception as e:
                 logger.error(f"AI classify error: {e}")
         # احتياطي
-        text_low = text.lower()
         service_kws = ['حل', 'واجب', 'بحث', 'تقرير', 'تلخيص', 'ترجمة', 'تحليل', 'تصميم', 'مساعدة', 'مشروع']
         promo_kws   = ['للتواصل', 'واتساب', 'إعلان', 'عرض خاص', 'خصم', 'كاش باك', 'رابط']
-        if any(k in text_low for k in promo_kws):   return False, "promo"
-        if any(k in text_low for k in service_kws): return True, "service"
+        if any(match_keyword_in_text(k, text) for k in promo_kws):   return False, "promo"
+        if any(match_keyword_in_text(k, text) for k in service_kws): return True, "service"
         return False, "normal"
 
     # ─── جلب تاريخ تيليجرام ──────────────────────────────────────
