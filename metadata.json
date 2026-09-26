@@ -1,6 +1,6 @@
 {
-  "name": "سُرعة إنجاز - الخدمات الطلابية والأكاديمية",
-  "description": "مركز سرعة إنجاز للخدمات الطلابية والأكاديمية ونظام التليجرام المتكامل",
+  "name": "Anwer Telegram Services",
+  "description": "منصة خدمات وتيليجرام مركز سرعة إنجاز",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

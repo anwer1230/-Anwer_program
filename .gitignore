@@ -48,13 +48,13 @@ Thumbs.db
 .cache/
 .local/
 
-# Python & App
+# Python & logs
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
 *.log
+telegram_monitoring.log
+bun.lock
+package-lock.json
 sessions/
 *.session
 *.session-journal
-database.db
