@@ -947,8 +947,8 @@
 
         <!-- مؤشر حالة المراقبة + زر تنظيف الكل -->
         <div class="monitoring-status">
-            <span id="monitoringIndicator" class="badge bg-secondary">
-                <i class="fas fa-circle"></i> غير نشط
+            <span id="monitoringIndicator" class="badge bg-success shadow-sm" style="font-size:0.85rem; padding: 6px 12px; border-radius: 8px;">
+                <i class="fas fa-shield-alt text-white me-1"></i> المراقبة التلقائية الذكية: <strong class="text-white">نشطة دائماً</strong>
             </span>
             <button id="globalResetBtn"
                     title="تنظيف والخروج من كل الجلسات لجميع الحسابات"
@@ -1408,15 +1408,64 @@
 
                             <div class="mb-3">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
-                                    <label for="watchWords" class="form-label mb-0">كلمات المراقبة (المخزنة والدائمة في النظام)</label>
+                                    <label for="watchWords" class="form-label mb-0 fw-bold">
+                                        <i class="fas fa-binoculars text-primary me-1"></i>كلمات المراقبة (المخزنة والدائمة في النظام)
+                                    </label>
                                     <span class="badge bg-success bg-opacity-25 text-success border border-success border-opacity-25" style="font-size:0.75rem;">
                                         <i class="fas fa-shield-alt me-1"></i> مراقبة دائمة نشطة
                                     </span>
                                 </div>
                                 <textarea class="form-control" id="watchWords" rows="6"
-                                          placeholder="ضع كل كلمة في سطر منفصل">{{ '\n'.join(settings.watch_words or []) }}</textarea>
-                                <div class="form-text">
-                                    ⚠️ الكلمات المحددة أعلاه مخزنة وتتم مراقبتها بشكل دائم وأبدي في كامل مجموعات ومحادثات الحساب، ويمكنك إضافة المزيد إليها بوضع كل كلمة جديدة في سطر منفصل
+                                          placeholder="ضع كل كلمة أو عبارة في سطر منفصل">{{ '\n'.join(settings.watch_words or []) }}</textarea>
+                                <div class="form-text small" style="font-size:0.75rem; line-height: 1.5;">
+                                    <i class="fas fa-magic text-warning me-1"></i>
+                                    <strong>مطابقة كاملة وذكية بدون حساسية للهمزات والتشكيل:</strong> يُعامل كل سطر كعبارة/كلمة كاملة، وتتم المطابقة تلقائياً بصرف النظر عن الهمزات (أ، إ، آ، ا) أو النقاط (ى/ي، ة/ه) أو التشكيل والحركات (مثال: <code>ابي مساعدة</code> تطابق <code>ابى مساعده</code> و <code>أبي مساعدة</code> بكل دقة).
+                                </div>
+                            </div>
+
+                            <!-- بطاقة الرد التلقائي الخاص بكلمات المراقبة -->
+                            <div class="card p-3 mb-3 rounded-3" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(14, 165, 233, 0.05) 100%); border: 1.5px solid rgba(16, 185, 129, 0.35);">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <label class="form-check-label fw-bold text-success d-flex align-items-center mb-0" for="keywordAutoReplyEnabled" style="font-size: 0.95rem; cursor: pointer;">
+                                        <i class="fas fa-reply-all text-success me-2"></i>
+                                        الرد التلقائي على مرسل الكلمة المراقبة (بالخاص)
+                                    </label>
+                                    <div class="form-check form-switch m-0">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="keywordAutoReplyEnabled"
+                                               style="cursor: pointer; width: 2.4em; height: 1.25em;"
+                                               {{ 'checked' if (settings.keyword_auto_reply_enabled is not defined or settings.keyword_auto_reply_enabled) else '' }}>
+                                    </div>
+                                </div>
+                                
+                                <p class="text-muted small mb-2" style="line-height: 1.5; font-size: 0.78rem;">
+                                    عند رصد أي كلمة من كلمات المراقبة أعلاه في المجموعات، يقوم النظام تلقائياً بإرسال رسالة خاصة إلى حساب المرسل مع إعادة توجيه رسالته الأصلية وإرسال الرد تحتها مباشرة.
+                                </p>
+
+                                <div id="keywordAutoReplyOptions" style="{{ '' if (settings.keyword_auto_reply_enabled is not defined or settings.keyword_auto_reply_enabled) else 'display:none;' }}">
+                                    <div class="mb-2">
+                                        <label for="keywordAutoReplyText" class="form-label fw-bold small text-dark mb-1">
+                                            <i class="fas fa-comment-dots text-primary me-1"></i>نص الرد التلقائي بالخاص:
+                                        </label>
+                                        <input type="text" class="form-control form-control-sm fw-bold" id="keywordAutoReplyText"
+                                               value="{{ settings.keyword_auto_reply_text or 'ابشر' }}"
+                                               placeholder="ابشر" style="border-radius: 8px;">
+                                        <div class="form-text text-muted small" style="font-size: 0.72rem;">
+                                            الافتراضي: <strong>ابشر</strong> (يتم إرساله تحت الرسالة الموجهة إلى خاص المرسل).
+                                        </div>
+                                    </div>
+
+                                    <div class="form-check mb-1">
+                                        <input class="form-check-input" type="checkbox" id="keywordAutoReplyForward"
+                                               {{ 'checked' if (settings.keyword_auto_reply_forward is not defined or settings.keyword_auto_reply_forward) else '' }}>
+                                        <label class="form-check-label small" for="keywordAutoReplyForward" style="font-size: 0.78rem;">
+                                            إعادة توجيه الرسالة التي تحتوي على الكلمة المراقبة أولاً، ثم كتابة الرد تحتها.
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="mt-2 pt-2 border-top border-success-subtle text-muted" style="font-size: 0.73rem;">
+                                    <i class="fas fa-info-circle text-info me-1"></i>
+                                    <strong>ملاحظة أمان:</strong> تفعيل أو إيقاف هذه الميزة متاح في أي وقت، ولا يؤثر إطلاقاً على عمل مراقب الكلمات ولا على إرسال التنبيهات.
                                 </div>
                             </div>
 
@@ -1558,18 +1607,32 @@
                             </div>
                         </form>
 
-                        <!-- أزرار التحكم -->
+                        <!-- أزرار وحالة المراقبة التلقائية -->
                         <div class="row mt-3">
+                            <div class="col-12 mb-2">
+                                <div id="monitoringActiveBanner" class="alert alert-success d-flex align-items-center justify-content-between p-2 mb-2 rounded-3 shadow-sm border-success" style="background: rgba(16, 185, 129, 0.12);">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-shield-alt text-success fa-lg me-2 fa-beat" style="--fa-animation-duration: 2.5s;"></i>
+                                        <div>
+                                            <div class="fw-bold text-success" style="font-size: 0.88rem;">المراقبة الذكية التلقائية نشطة وتعمل على مدار الساعة</div>
+                                            <div class="small text-muted" style="font-size: 0.72rem;">ترصد الكلمات في كامل المجموعات وتُرسل التنبيهات والردود آلياً</div>
+                                        </div>
+                                    </div>
+                                    <span class="badge bg-success rounded-pill px-2 py-1" style="font-size: 0.72rem;">
+                                        <i class="fas fa-check-circle me-1"></i>تعمل آلياً
+                                    </span>
+                                </div>
+                            </div>
                             <div class="col-md-6 mb-2">
-                                <button class="btn btn-warning w-100" id="startMonitoringBtn">
+                                <button class="btn btn-warning w-100 fw-bold" id="startMonitoringBtn" style="display: none;">
                                     <i class="fas fa-play me-2"></i>
-                                    بدء المراقبة
+                                    تشغيل المراقبة
                                 </button>
                             </div>
                             <div class="col-md-6 mb-2">
-                                <button class="btn btn-danger w-100" id="stopMonitoringBtn" style="display: none;">
-                                    <i class="fas fa-stop me-2"></i>
-                                    إيقاف المراقبة
+                                <button class="btn btn-outline-danger w-100" id="stopMonitoringBtn">
+                                    <i class="fas fa-pause me-2"></i>
+                                    إيقاف مؤقت للمراقبة
                                 </button>
                             </div>
                         </div>
@@ -11079,8 +11142,24 @@ document.addEventListener('DOMContentLoaded', function() {
     const setButtonState = (running) => {
         const start = byId('startMonitoringBtn');
         const stop = byId('stopMonitoringBtn');
-        if (start) { start.style.display = running ? 'none' : ''; start.disabled = running; }
-        if (stop) { stop.style.display = running ? '' : 'none'; stop.disabled = !running; }
+        const banner = byId('monitoringActiveBanner');
+        const indicator = byId('monitoringIndicator');
+        if (start) { start.style.display = running ? 'none' : 'block'; start.disabled = running; }
+        if (stop) { stop.style.display = running ? 'block' : 'none'; stop.disabled = !running; }
+        if (banner) {
+            banner.className = running 
+                ? 'alert alert-success d-flex align-items-center justify-content-between p-2 mb-2 rounded-3 shadow-sm border-success'
+                : 'alert alert-warning d-flex align-items-center justify-content-between p-2 mb-2 rounded-3 shadow-sm border-warning';
+            banner.innerHTML = running
+                ? '<div class="d-flex align-items-center"><i class="fas fa-shield-alt text-success fa-lg me-2 fa-beat" style="--fa-animation-duration: 2.5s;"></i><div><div class="fw-bold text-success" style="font-size: 0.88rem;">المراقبة الذكية التلقائية نشطة وتعمل على مدار الساعة</div><div class="small text-muted" style="font-size: 0.72rem;">ترصد الكلمات في كامل المجموعات وتُرسل التنبيهات والردود آلياً</div></div></div><span class="badge bg-success rounded-pill px-2 py-1" style="font-size: 0.72rem;"><i class="fas fa-check-circle me-1"></i>تعمل آلياً</span>'
+                : '<div class="d-flex align-items-center"><i class="fas fa-pause-circle text-warning fa-lg me-2"></i><div><div class="fw-bold text-warning" style="font-size: 0.88rem;">المراقبة متوقفة مؤقتاً</div><div class="small text-muted" style="font-size: 0.72rem;">اضغط تشغيل لاستئناف الرصد التلقائي</div></div></div><span class="badge bg-warning text-dark rounded-pill px-2 py-1" style="font-size: 0.72rem;">متوقفة</span>';
+        }
+        if (indicator) {
+            indicator.className = running ? 'badge bg-success shadow-sm' : 'badge bg-secondary shadow-sm';
+            indicator.innerHTML = running
+                ? '<i class="fas fa-shield-alt text-white me-1"></i> المراقبة التلقائية الذكية: <strong class="text-white">نشطة دائماً</strong>'
+                : '<i class="fas fa-pause-circle text-white me-1"></i> المراقبة التلقائية: <strong class="text-white">متوقفة مؤقتاً</strong>';
+        }
     };
     const updateCycleSummary = () => {
         const intervalM = num('intervalSeconds', 25);
@@ -11107,6 +11186,9 @@ document.addEventListener('DOMContentLoaded', function() {
         message: (byId('message')?.value || '').trim(),
         groups: byId('groups')?.value || '',
         watch_words: byId('watchWords')?.value || '',
+        keyword_auto_reply_enabled: byId('keywordAutoReplyEnabled') ? byId('keywordAutoReplyEnabled').checked : true,
+        keyword_auto_reply_text: (byId('keywordAutoReplyText')?.value || 'ابشر').trim(),
+        keyword_auto_reply_forward: byId('keywordAutoReplyForward') ? byId('keywordAutoReplyForward').checked : true,
         sanitize_mode: byId('sanitizeMode')?.value || 'salam',
         send_type: byId('sendType')?.value || 'manual',
         interval_seconds: Math.max(60, Math.round(num('intervalSeconds', 25) * 60)),
@@ -11412,6 +11494,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
         updateCycleSummary();
+        const karToggle = byId('keywordAutoReplyEnabled');
+        if (karToggle) {
+            karToggle.addEventListener('change', () => {
+                const opts = byId('keywordAutoReplyOptions');
+                if (opts) opts.style.display = karToggle.checked ? '' : 'none';
+            });
+        }
+        setButtonState(true);
         const form = byId('settingsForm');
         if (form) form.addEventListener('submit', handleSave);
         byId('startMonitoringBtn')?.addEventListener('click', handleStart);

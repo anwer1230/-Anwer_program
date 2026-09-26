@@ -1015,6 +1015,49 @@ TELEGRAM_API_HASH = '56f64582b363d367280db96586b97801'
 API_ID       = int(os.environ.get('TELEGRAM_API_ID', TELEGRAM_API_ID) or TELEGRAM_API_ID)
 API_HASH     = os.environ.get('TELEGRAM_API_HASH', TELEGRAM_API_HASH) or TELEGRAM_API_HASH
 
+# ── دوال التطبيع العربي الدقيق لمطابقة كلمات المراقبة (بدون حساسية للهمزات والتشكيل والنقاط) ──
+def normalize_arabic_text(text: str) -> str:
+    """
+    تطبيع النصوص العربية بشكل كامل لمطابقة الكلمات والعبارات المراقبة:
+    - إزالة التشكيل والحركات (فتحة، ضمة، كسرة، سكون، تنوين، شدة)
+    - إزالة التطويل (الكشيدة ـ)
+    - توحيد الألف بكافة أشكالها (أ، إ، آ، ٱ، ا -> ا)
+    - توحيد الياء والألف المقصورة (ى، ي -> ي)
+    - توحيد التاء المربوطة والهاء (ة، ه -> ه)
+    - توحيد الهمزات (ؤ -> و، ئ -> ي، ء -> إزالة)
+    - استبدال علامات الترقيم والرموز بمسافات لضمان عدم التصاق الكلمات
+    - توحيد المسافات المتعددة وتقليصها
+    """
+    if not text:
+        return ""
+    import unicodedata, re
+    text = unicodedata.normalize('NFKD', str(text))
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    text = re.sub(r'[\u0640]', '', text)
+    text = re.sub(r'[أإآٱ]', 'ا', text)
+    text = re.sub(r'[ىي]', 'ي', text)
+    text = re.sub(r'[ةه]', 'ه', text)
+    text = re.sub(r'ؤ', 'و', text)
+    text = re.sub(r'ئ', 'ي', text)
+    text = re.sub(r'ء', '', text)
+    text = re.sub(r'[^\w\s\u0621-\u064A]', ' ', text)
+    text = text.lower()
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def is_arabic_keyword_in_text(keyword: str, text: str) -> bool:
+    """
+    فحص تطابق كلمة أو عبارة مراقبة كاملة كسطر كامل في الرسالة:
+    مطابقة الكلمة أو العبارة كاملة دون حساسية للهمزات أو النقاط أو الحركات.
+    """
+    norm_kw = normalize_arabic_text(keyword)
+    norm_text = normalize_arabic_text(text)
+    if not norm_kw or not norm_text:
+        return False
+    padded_kw = f" {norm_kw} "
+    padded_text = f" {norm_text} "
+    return padded_kw in padded_text
+
 # ── الكلمات المراقبة الافتراضية والدائمة (المستخرجة نصاً من الصور) ──────
 DEFAULT_MONITORING_KEYWORDS_TEXT = """اريد مساعدة
 ابي مساعدة
@@ -1538,6 +1581,9 @@ def save_settings(user_id, settings, force=False):
             settings.setdefault('my_alerts_actions', True)
             settings.setdefault('my_alerts_reply_sound_enabled', True)
             settings.setdefault('my_alerts_reply_sound_tone', 'chime')
+            settings.setdefault('keyword_auto_reply_enabled', True)
+            settings.setdefault('keyword_auto_reply_text', 'ابشر')
+            settings.setdefault('keyword_auto_reply_forward', True)
             settings.setdefault('user_auto_replies', [])
 
         if not force:
@@ -1572,6 +1618,9 @@ def load_settings(user_id):
                 database_settings.setdefault('my_alerts_actions', True)
                 database_settings.setdefault('my_alerts_reply_sound_enabled', True)
                 database_settings.setdefault('my_alerts_reply_sound_tone', 'chime')
+                database_settings.setdefault('keyword_auto_reply_enabled', True)
+                database_settings.setdefault('keyword_auto_reply_text', 'ابشر')
+                database_settings.setdefault('keyword_auto_reply_forward', True)
                 database_settings.setdefault('user_auto_replies', [])
                 return database_settings
         except Exception as _db_load_error:
@@ -1590,6 +1639,9 @@ def load_settings(user_id):
             data.setdefault('my_alerts_actions', True)
             data.setdefault('my_alerts_reply_sound_enabled', True)
             data.setdefault('my_alerts_reply_sound_tone', 'chime')
+            data.setdefault('keyword_auto_reply_enabled', True)
+            data.setdefault('keyword_auto_reply_text', 'ابشر')
+            data.setdefault('keyword_auto_reply_forward', True)
             data.setdefault('user_auto_replies', [])
             if _DB_READY:
                 _app_db.save_settings(user_id, data)
@@ -1606,6 +1658,9 @@ def load_settings(user_id):
             data.setdefault('my_alerts_actions', True)
             data.setdefault('my_alerts_reply_sound_enabled', True)
             data.setdefault('my_alerts_reply_sound_tone', 'chime')
+            data.setdefault('keyword_auto_reply_enabled', True)
+            data.setdefault('keyword_auto_reply_text', 'ابشر')
+            data.setdefault('keyword_auto_reply_forward', True)
             data.setdefault('user_auto_replies', [])
             # نقل البيانات للمجلد الجديد والقاعدة عند توفرها
             save_settings(user_id, data, force=True)
@@ -1618,6 +1673,9 @@ def load_settings(user_id):
             'my_alerts_actions': True,
             'my_alerts_reply_sound_enabled': True,
             'my_alerts_reply_sound_tone': 'chime',
+            'keyword_auto_reply_enabled': True,
+            'keyword_auto_reply_text': 'ابشر',
+            'keyword_auto_reply_forward': True,
             'user_auto_replies': []
         }
     except Exception as e:
@@ -1630,6 +1688,9 @@ def load_settings(user_id):
             'my_alerts_actions': True,
             'my_alerts_reply_sound_enabled': True,
             'my_alerts_reply_sound_tone': 'chime',
+            'keyword_auto_reply_enabled': True,
+            'keyword_auto_reply_text': 'ابشر',
+            'keyword_auto_reply_forward': True,
             'user_auto_replies': []
         }
 
@@ -2484,22 +2545,20 @@ class TelegramClientManager:
                 self._processed_msg_ids.clear()
             self._processed_msg_ids.add(msg_uid)
 
-            import unicodedata
-            def _normalize(s):
-                return ''.join(c for c in unicodedata.normalize('NFKD', s)
-                               if unicodedata.category(c) != 'Mn')
-
-            text_clean = _normalize(text).lower()
             matched = []
             for keyword in kw_list:
-                kw = keyword.strip()
-                if kw and _normalize(kw).lower() in text_clean:
+                kw = (keyword or '').strip()
+                if kw and is_arabic_keyword_in_text(kw, text):
                     matched.append(kw)
 
             if matched:
                 combined_kw = ' | '.join(matched)
                 logger.info(f"🔑 [{self.user_id}] {len(matched)} كلمة مطابقة: '{combined_kw}' في {group_identifier}")
                 await self._trigger_keyword_alert(message, combined_kw, group_identifier, group_link, event)
+                try:
+                    await self._handle_keyword_auto_reply(event, message, matched, group_identifier)
+                except Exception as _kar_err:
+                    logger.warning(f"Keyword auto-reply error (isolated): {_kar_err}")
 
         except Exception as e:
             logger.error(f"Error handling new message: {str(e)}", exc_info=True)
@@ -2746,6 +2805,96 @@ class TelegramClientManager:
 
         except Exception as e:
             logger.error(f"❌ Error triggering keyword alert: {str(e)}")
+
+    async def _handle_keyword_auto_reply(self, event, message, matched_keywords, group_identifier):
+        """الرد التلقائي بالخاص على مرسل الكلمة المراقبة مع إعادة توجيه الرسالة الأصلية وتحتها كلمة الرد (ابشر)"""
+        try:
+            settings = load_settings(self.user_id) or {}
+            # التحقق من تفعيل الميزة
+            if not settings.get('keyword_auto_reply_enabled', True):
+                return
+
+            reply_text = str(settings.get('keyword_auto_reply_text', 'ابشر') or 'ابشر').strip() or 'ابشر'
+            forward_original = bool(settings.get('keyword_auto_reply_forward', True))
+
+            try:
+                sender = await event.get_sender()
+            except Exception:
+                sender = None
+
+            sender_id = getattr(event, 'sender_id', None)
+            if not sender_id and sender:
+                sender_id = getattr(sender, 'id', None)
+
+            # عدم الرد على الحساب الشخصي نفسه
+            await self._ensure_my_info()
+            if sender_id and self.my_id and sender_id == self.my_id:
+                return
+
+            if not sender_id and not sender:
+                logger.debug(f"Could not identify sender for keyword auto-reply in {group_identifier}")
+                return
+
+            # تفادي تكرار الرد لنفس الشخص في غضون 60 ثانية
+            now = time.time()
+            if not hasattr(self, '_last_keyword_reply_times'):
+                self._last_keyword_reply_times = {}
+            if sender_id and (now - self._last_keyword_reply_times.get(sender_id, 0) < 60):
+                logger.info(f"⏳ تم تخطي الرد التلقائي بالخاص لـ {sender_id} منعاً للتكرار")
+                return
+
+            if sender_id:
+                self._last_keyword_reply_times[sender_id] = now
+                if len(self._last_keyword_reply_times) > 500:
+                    self._last_keyword_reply_times.clear()
+
+            target_entity = sender or sender_id
+            sent_reply = False
+
+            # إعادة توجيه الرسالة التي تحوي الكلمة المراقبة بالخاص أولاً إن أمكن
+            if forward_original:
+                try:
+                    await self.client.forward_messages(
+                        entity=target_entity,
+                        messages=message.id,
+                        from_peer=event.chat_id
+                    )
+                    # إرسال نص الرد تحتها (مثل "ابشر")
+                    await self.client.send_message(
+                        entity=target_entity,
+                        message=reply_text
+                    )
+                    sent_reply = True
+                    logger.info(f"✅ تم توجيه الرسالة وإرسال رد '{reply_text}' بالخاص لـ {sender_id}")
+                except Exception as fwd_err:
+                    logger.warning(f"تعذر التوجيه المباشر ({fwd_err})، سيتم إرسال اقتباس والرد بالخاص")
+                    orig_snippet = (message.text or '')[:300]
+                    quote_text = f"📨 بخصوص رسالتك:\n«{orig_snippet}»\n\n{reply_text}"
+                    await self.client.send_message(
+                        entity=target_entity,
+                        message=quote_text
+                    )
+                    sent_reply = True
+            else:
+                await self.client.send_message(
+                    entity=target_entity,
+                    message=reply_text
+                )
+                sent_reply = True
+
+            if sent_reply:
+                kw_str = ' | '.join(matched_keywords[:2])
+                sname = getattr(sender, 'first_name', '') or str(sender_id)
+                _emit_log_update('INFO', f"⚡ رد تلقائي بالخاص لمرسل '{kw_str}': «{reply_text}» ({sname})", self.user_id)
+                socketio.emit('auto_reply_triggered', {
+                    "keyword": kw_str,
+                    "reply": reply_text,
+                    "chat": f"خاص مع {sname}",
+                    "timestamp": time.strftime('%H:%M:%S')
+                }, to=self.user_id)
+        except Exception as e:
+            # حماية مطلقة: أي خطأ هنا معزول تماماً ولا يؤثر إطلاقاً على عمل مراقب الكلمات
+            logger.warning(f"Keyword auto-reply non-blocking exception: {e}")
 
     def update_monitoring_settings(self, keywords, groups):
         self.monitored_keywords = get_effective_watch_words(keywords)
@@ -6168,6 +6317,9 @@ def api_save_settings():
         'auto_reconnect': data.get('auto_reconnect', False),
         'sanitize_mode': new_mode,
         'smart_required_messages': int(data.get('smart_required_messages', 3)),
+        'keyword_auto_reply_enabled': bool(data.get('keyword_auto_reply_enabled', True)),
+        'keyword_auto_reply_text': str(data.get('keyword_auto_reply_text', 'ابشر') or 'ابشر').strip(),
+        'keyword_auto_reply_forward': bool(data.get('keyword_auto_reply_forward', True)),
     })
 
     if save_settings(user_id, current_settings):
